@@ -1,7 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from mmcv.cnn import ConvModule, Linear
 from mmcv.runner import ModuleList, auto_fp16
-
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from mmdet.models.builder import HEADS
 from .fcn_mask_head import FCNMaskHead
 import ipdb
@@ -39,7 +42,7 @@ class CoarseMaskHead(FCNMaskHead):
         super(CoarseMaskHead, self).__init__(
             *arg,
             num_convs=num_convs,
-            upsample_cfg=dict(type=None),
+            # upsample_cfg=dict(type=None),
             init_cfg=None,
             **kwarg)
         self.init_cfg = init_cfg
@@ -49,7 +52,7 @@ class CoarseMaskHead(FCNMaskHead):
         self.downsample_factor = downsample_factor
         assert self.downsample_factor >= 1
         # remove conv_logit
-        delattr(self, 'conv_logits')
+        # delattr(self, 'conv_logits')
 
         if downsample_factor > 1:
             downsample_in_channels = (
@@ -86,6 +89,13 @@ class CoarseMaskHead(FCNMaskHead):
 
     @auto_fp16()
     def forward(self, x):
+        """
+            一路继续往前走拿到28x28的实例分割
+            一路停下来组建7x7的MLP
+        """
+        mask_pred_instance = super().forward(x)
+        # ipdb.set_trace(context=5)
+
         for conv in self.convs:
             x = conv(x)
         if self.downsample_conv is not None:

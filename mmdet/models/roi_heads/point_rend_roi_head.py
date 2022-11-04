@@ -13,6 +13,7 @@ from .. import builder
 from ..builder import HEADS
 from .standard_roi_head import StandardRoIHead
 
+import copy
 import ipdb
 
 
@@ -29,33 +30,86 @@ class PointRendRoIHead(StandardRoIHead):
         """Initialize ``point_head``"""
         self.point_head = builder.build_head(point_head)
 
+    def _mask_forward(self, x, rois=None, pos_inds=None, bbox_feats=None):
+        """Mask head forward function used in both training and testing."""
+        assert ((rois is not None) ^
+                (pos_inds is not None and bbox_feats is not None))
+        if rois is not None:
+            mask_feats = self.mask_roi_extractor(
+                x[:self.mask_roi_extractor.num_inputs], rois)
+            if self.with_shared_head:
+                mask_feats = self.shared_head(mask_feats)
+        else:
+            assert bbox_feats is not None
+            mask_feats = bbox_feats[pos_inds]
+
+        mask_pred_coarse, mask_pred_instance = self.mask_head(mask_feats)
+        mask_results = dict(mask_pred_coarse=mask_pred_coarse, mask_pred_instance=mask_pred_instance,
+                            mask_feats=mask_feats)
+        return mask_results
+
     def _mask_forward_train(self, x, sampling_results, bbox_feats, gt_masks,
                             img_metas):
         """Run forward function and calculate loss for mask head and point head
         in training."""
-        mask_results = super()._mask_forward_train(x, sampling_results,
-                                                   bbox_feats, gt_masks,
-                                                   img_metas)
-        if mask_results['loss_mask'] is not None:
-            loss_point = self._mask_point_forward_train(
-                x, sampling_results, mask_results['mask_pred'], gt_masks,
-                img_metas)
-            mask_results['loss_mask'].update(loss_point)
 
+        if not self.share_roi_extractor:
+            pos_rois = bbox2roi([res.pos_bboxes for res in sampling_results])
+            mask_results = self._mask_forward(x, pos_rois)
+        else:
+            pos_inds = []
+            device = bbox_feats.device
+            for res in sampling_results:
+                pos_inds.append(
+                    torch.ones(
+                        res.pos_bboxes.shape[0],
+                        device=device,
+                        dtype=torch.uint8))
+                pos_inds.append(
+                    torch.zeros(
+                        res.neg_bboxes.shape[0],
+                        device=device,
+                        dtype=torch.uint8))
+            pos_inds = torch.cat(pos_inds)
+
+            mask_results = self._mask_forward(x, pos_inds=pos_inds, bbox_feats=bbox_feats)
+
+        # ipdb.set_trace(context=5)
+        coarse_train_cfg = self.train_cfg
+        instance_train_cfg = copy.deepcopy(self.train_cfg)
+        instance_train_cfg['mask_size'] = 28
+        # ipdb.set_trace(context=5)
+        mask_targets_coarse = self.mask_head.get_targets(sampling_results, gt_masks, coarse_train_cfg)
+        mask_targets_instance = self.mask_head.get_targets(sampling_results, gt_masks, instance_train_cfg)
+
+        # ipdb.set_trace(context=5)
+        pos_labels = torch.cat([res.pos_gt_labels for res in sampling_results])
+
+        # ipdb.set_trace(context=5)
+        loss_mask = dict()
+        loss_mask_coarse = self.mask_head.loss(mask_results['mask_pred_coarse'], mask_targets_coarse, pos_labels)
+        loss_mask_instance = self.mask_head.loss(mask_results['mask_pred_instance'], mask_targets_instance, pos_labels)
+        loss_point = self._mask_point_forward_train(x, sampling_results, mask_results['mask_pred_coarse'], gt_masks, img_metas)
+        loss_mask.update(loss_mask_coarse=loss_mask_coarse['loss_mask'], loss_mask_instance=loss_mask_instance['loss_mask'], loss_mask_point=loss_point['loss_point'])
+
+        # ipdb.set_trace(context=5)
+        mask_results.update(loss_mask=loss_mask, mask_targets_coarse=mask_targets_coarse, mask_targets_instance=mask_targets_instance)
+
+        # ipdb.set_trace(context=5)
         return mask_results
 
-    def _mask_point_forward_train(self, x, sampling_results, mask_pred,
+    def _mask_point_forward_train(self, x, sampling_results, mask_pred_coarse,
                                   gt_masks, img_metas):
         """Run forward function and calculate loss for point head in
         training."""
         pos_labels = torch.cat([res.pos_gt_labels for res in sampling_results])
         rel_roi_points = self.point_head.get_roi_rel_points_train(
-            mask_pred, pos_labels, cfg=self.train_cfg)
+            mask_pred_coarse, pos_labels, cfg=self.train_cfg)
         rois = bbox2roi([res.pos_bboxes for res in sampling_results])
 
         fine_grained_point_feats = self._get_fine_grained_point_feats(
             x, rois, rel_roi_points, img_metas)
-        coarse_point_feats = point_sample(mask_pred, rel_roi_points)
+        coarse_point_feats = point_sample(mask_pred_coarse, rel_roi_points)
         mask_point_pred = self.point_head(fine_grained_point_feats,
                                           coarse_point_feats)
         mask_point_target = self.point_head.get_targets(
@@ -207,12 +261,12 @@ class PointRendRoIHead(StandardRoIHead):
                     x_i = [xx[[i]] for xx in x]
                     mask_rois_i = mask_rois[i]
                     mask_rois_i[:, 0] = 0  # TODO: remove this hack
-                    # mask_pred_i = self._mask_point_forward_test(
-                    #     x_i, mask_rois_i, det_labels[i], mask_preds[i],
-                    #     [img_metas])
-                    # ipdb.set_trace(context=5)
+                    mask_pred_i = self._mask_point_forward_test(
+                        x_i, mask_rois_i, det_labels[i], mask_preds[i],
+                        [img_metas])
+                    ipdb.set_trace(context=5)
                     segm_result = self.mask_head.get_seg_masks(
-                        mask_preds[i], _bboxes[i], det_labels[i], self.test_cfg,
+                        mask_pred_i, _bboxes[i], det_labels[i], self.test_cfg,
                         ori_shapes[i], scale_factors[i], rescale)
                     segm_results.append(segm_result)
         return segm_results

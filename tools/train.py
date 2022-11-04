@@ -6,6 +6,8 @@ import os.path as osp
 import time
 import warnings
 
+import sys
+sys.path.insert(1, "/hy-tmp/mmdetection/")
 import mmcv
 import torch
 import torch.distributed as dist
