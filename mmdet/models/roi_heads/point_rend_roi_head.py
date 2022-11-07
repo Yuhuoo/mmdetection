@@ -21,14 +21,19 @@ import ipdb
 class PointRendRoIHead(StandardRoIHead):
     """`PointRend <https://arxiv.org/abs/1912.08193>`_."""
 
-    def __init__(self, point_head, *args, **kwargs):
+    def __init__(self, point_head, semantic_head, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self.with_bbox and self.with_mask
         self.init_point_head(point_head)
+        self.init_semantic_head(semantic_head)
 
     def init_point_head(self, point_head):
         """Initialize ``point_head``"""
         self.point_head = builder.build_head(point_head)
+
+    def init_semantic_head(self, semantic_head):
+        """Initialize ``semantic_head``"""
+        self.semantic_head = builder.build_head(semantic_head)
 
     def _mask_forward(self, x, rois=None, pos_inds=None, bbox_feats=None):
         """Mask head forward function used in both training and testing."""
@@ -44,7 +49,12 @@ class PointRendRoIHead(StandardRoIHead):
             mask_feats = bbox_feats[pos_inds]
 
         mask_pred_coarse, mask_pred_instance = self.mask_head(mask_feats)
-        mask_results = dict(mask_pred_coarse=mask_pred_coarse, mask_pred_instance=mask_pred_instance,
+        # ipdb.set_trace()
+        mask_pred_semantic = self.semantic_head(x[0])
+        # ipdb.set_trace()
+        mask_results = dict(mask_pred_coarse=mask_pred_coarse,
+                            mask_pred_instance=mask_pred_instance,
+                            mask_pred_semantic=mask_pred_semantic,
                             mask_feats=mask_feats)
         return mask_results
 
@@ -53,6 +63,7 @@ class PointRendRoIHead(StandardRoIHead):
         """Run forward function and calculate loss for mask head and point head
         in training."""
 
+        # ipdb.set_trace()
         if not self.share_roi_extractor:
             pos_rois = bbox2roi([res.pos_bboxes for res in sampling_results])
             mask_results = self._mask_forward(x, pos_rois)
@@ -81,6 +92,7 @@ class PointRendRoIHead(StandardRoIHead):
         # ipdb.set_trace(context=5)
         mask_targets_coarse = self.mask_head.get_targets(sampling_results, gt_masks, coarse_train_cfg)
         mask_targets_instance = self.mask_head.get_targets(sampling_results, gt_masks, instance_train_cfg)
+        mask_targets_semantic = self.semantic_head.get_targets(gt_masks, device=bbox_feats.device, dtype=mask_results['mask_pred_semantic'].dtype)
 
         # ipdb.set_trace(context=5)
         pos_labels = torch.cat([res.pos_gt_labels for res in sampling_results])
@@ -89,11 +101,14 @@ class PointRendRoIHead(StandardRoIHead):
         loss_mask = dict()
         loss_mask_coarse = self.mask_head.loss(mask_results['mask_pred_coarse'], mask_targets_coarse, pos_labels)
         loss_mask_instance = self.mask_head.loss(mask_results['mask_pred_instance'], mask_targets_instance, pos_labels)
+        loss_mask_semantic = self.semantic_head.loss(mask_results['mask_pred_semantic'], mask_targets_semantic)
         loss_point = self._mask_point_forward_train(x, sampling_results, mask_results['mask_pred_coarse'], gt_masks, img_metas)
-        loss_mask.update(loss_mask_coarse=loss_mask_coarse['loss_mask'], loss_mask_instance=loss_mask_instance['loss_mask'], loss_mask_point=loss_point['loss_point'])
+        loss_mask.update(loss_mask_coarse=loss_mask_coarse['loss_mask'], loss_mask_instance=loss_mask_instance['loss_mask'],
+                         loss_mask_point=loss_point['loss_point'], loss_mask_semantic=loss_mask_semantic['loss_seg'])
 
         # ipdb.set_trace(context=5)
-        mask_results.update(loss_mask=loss_mask, mask_targets_coarse=mask_targets_coarse, mask_targets_instance=mask_targets_instance)
+        mask_results.update(loss_mask=loss_mask, mask_targets_coarse=mask_targets_coarse,
+                            mask_targets_instance=mask_targets_instance, mask_targets_semantic=mask_targets_semantic)
 
         # ipdb.set_trace(context=5)
         return mask_results
@@ -245,10 +260,13 @@ class PointRendRoIHead(StandardRoIHead):
 
             mask_rois = bbox2roi(_bboxes)
             mask_results = self._mask_forward(x, mask_rois)
+            # mask_pred_coarse, mask_pred_instance
             # split batch mask prediction back to each image
-            mask_pred = mask_results['mask_pred']
+            mask_pred_coarse = mask_results['mask_pred_coarse']
+            mask_pred_instance = mask_results['mask_pred_instance']
+            mask_pred_semantic = mask_results['mask_pred_semantic']
             num_mask_roi_per_img = [len(det_bbox) for det_bbox in det_bboxes]
-            mask_preds = mask_pred.split(num_mask_roi_per_img, 0)
+            mask_preds_coarse = mask_pred_coarse.split(num_mask_roi_per_img, 0)
             mask_rois = mask_rois.split(num_mask_roi_per_img, 0)
 
             # apply mask post-processing to each image individually
@@ -262,12 +280,15 @@ class PointRendRoIHead(StandardRoIHead):
                     mask_rois_i = mask_rois[i]
                     mask_rois_i[:, 0] = 0  # TODO: remove this hack
                     mask_pred_i = self._mask_point_forward_test(
-                        x_i, mask_rois_i, det_labels[i], mask_preds[i],
+                        x_i, mask_rois_i, det_labels[i], mask_preds_coarse[i],
                         [img_metas])
-                    ipdb.set_trace(context=5)
+                    # ipdb.set_trace(context=5)
                     segm_result = self.mask_head.get_seg_masks(
                         mask_pred_i, _bboxes[i], det_labels[i], self.test_cfg,
                         ori_shapes[i], scale_factors[i], rescale)
+                    # semantic_result = self.semantic_head.get_seg_masks(
+                    #     mask_pred_semantic, self.test_cfg)
+                    # ipdb.set_trace(context=5)
                     segm_results.append(segm_result)
         return segm_results
 

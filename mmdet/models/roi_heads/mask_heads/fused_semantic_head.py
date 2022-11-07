@@ -7,6 +7,7 @@ from mmcv.cnn import ConvModule
 from mmcv.runner import BaseModule, auto_fp16, force_fp32
 
 from mmdet.models.builder import HEADS, build_loss
+import ipdb
 
 
 @HEADS.register_module()
@@ -95,6 +96,7 @@ class FusedSemanticHead(BaseModule):
 
     @auto_fp16()
     def forward(self, feats):
+        # ipdb.set_trace()
         x = self.lateral_convs[self.fusion_level](feats[self.fusion_level])
         fused_size = tuple(x.shape[-2:])
         for i, feat in enumerate(feats):
@@ -103,12 +105,13 @@ class FusedSemanticHead(BaseModule):
                     feat, size=fused_size, mode='bilinear', align_corners=True)
                 # fix runtime error of "+=" inplace operation in PyTorch 1.10
                 x = x + self.lateral_convs[i](feat)
-
+        # ipdb.set_trace()
         for i in range(self.num_convs):
             x = self.convs[i](x)
-
+        # ipdb.set_trace()
         mask_pred = self.conv_logits(x)
         x = self.conv_embedding(x)
+        # ipdb.set_trace()
         return mask_pred, x
 
     @force_fp32(apply_to=('mask_pred', ))

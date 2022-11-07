@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from ..builder import LOSSES
 from .utils import weight_reduce_loss
-
+import ipdb
 
 def cross_entropy(pred,
                   label,
@@ -115,7 +115,7 @@ def binary_cross_entropy(pred,
     """
     # The default value of ignore_index is the same as F.cross_entropy
     ignore_index = -100 if ignore_index is None else ignore_index
-
+    # ipdb.set_trace()
     if pred.dim() != label.dim():
         label, weight, valid_mask = _expand_onehot_labels(
             label, weight, pred.size(-1), ignore_index)
@@ -136,12 +136,13 @@ def binary_cross_entropy(pred,
 
     # weighted element-wise losses
     weight = weight.float()
+    # ipdb.set_trace()
     loss = F.binary_cross_entropy_with_logits(
         pred, label.float(), pos_weight=class_weight, reduction='none')
     # do the reduction for the weighted loss
     loss = weight_reduce_loss(
         loss, weight, reduction=reduction, avg_factor=avg_factor)
-
+    ipdb.set_trace()
     return loss
 
 
@@ -288,6 +289,7 @@ class CrossEntropyLoss(nn.Module):
                 self.class_weight, device=cls_score.device)
         else:
             class_weight = None
+        # ipdb.set_trace()
         loss_cls = self.loss_weight * self.cls_criterion(
             cls_score,
             label,

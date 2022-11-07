@@ -112,6 +112,7 @@ class StandardRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             mask_results = self._mask_forward_train(x, sampling_results,
                                                     bbox_results['bbox_feats'],
                                                     gt_masks, img_metas)
+            # ipdb.set_trace()
             losses.update(mask_results['loss_mask'])
 
         return losses

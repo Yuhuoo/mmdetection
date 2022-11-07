@@ -8,7 +8,8 @@ from mmdet.core import (bbox2result, bbox2roi, bbox_mapping, merge_aug_bboxes,
 from ..builder import HEADS, build_head, build_roi_extractor
 from ..utils.brick_wrappers import adaptive_avg_pool2d
 from .cascade_roi_head import CascadeRoIHead
-
+import ipdb
+from PIL import Image
 
 @HEADS.register_module()
 class HybridTaskCascadeRoIHead(CascadeRoIHead):
@@ -245,6 +246,7 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
         losses = dict()
         if self.with_semantic:
             semantic_pred, semantic_feat = self.semantic_head(x)
+            ipdb.set_trace()
             loss_seg = self.semantic_head.loss(semantic_pred, gt_semantic_seg)
             losses['loss_semantic_seg'] = loss_seg
         else:
@@ -351,7 +353,8 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
             of tuple is bbox results, second element is mask results.
         """
         if self.with_semantic:
-            _, semantic_feat = self.semantic_head(x)
+            ipdb.set_trace()
+            semantic_pred, semantic_feat = self.semantic_head(x)
         else:
             semantic_feat = None
 

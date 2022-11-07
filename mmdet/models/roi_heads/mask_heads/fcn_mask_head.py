@@ -142,7 +142,7 @@ class FCNMaskHead(BaseModule):
         pos_assigned_gt_inds = [
             res.pos_assigned_gt_inds for res in sampling_results
         ]
-        # ipdb.set_trace(context=5)
+        ipdb.set_trace(context=5)
         mask_targets = mask_target(pos_proposals, pos_assigned_gt_inds,
                                    gt_masks, rcnn_train_cfg)
         return mask_targets

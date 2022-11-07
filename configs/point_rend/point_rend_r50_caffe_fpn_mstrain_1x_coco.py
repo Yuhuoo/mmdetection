@@ -29,7 +29,13 @@ model = dict(
             num_classes=80,
             coarse_pred_each_layer=True,
             loss_point=dict(
-                type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))),
+                type='CrossEntropyLoss', use_mask=True, loss_weight=1.0)),
+        semantic_head=dict(
+            type='SemanticMaskHead',
+            upsample_cfg=dict(type=None),
+            class_agnostic=True,
+            loss_seg=dict(
+                type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0))),
     # model training and testing settings
     train_cfg=dict(
         rcnn=dict(
@@ -42,3 +48,6 @@ model = dict(
             subdivision_steps=5,
             subdivision_num_points=28 * 28,
             scale_factor=2)))
+
+# find_unused_parameters = True
+
