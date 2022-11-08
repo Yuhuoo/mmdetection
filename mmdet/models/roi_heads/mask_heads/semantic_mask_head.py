@@ -106,8 +106,9 @@ class SemanticMaskHead(FCNMaskHead):
                 class label c.
         """
 
-        img_h, img_w = mask_semantic_pred.shape[-2:]
-        im_mask = torch.zeros(img_h, img_w, torch.uint8)
+        ipdb.set_trace()
+        img_h, img_w = mask_semantic_pred.size[-2:]
+        im_mask = torch.zeros([img_h, img_w], dtype=torch.uint8)
 
         mask_semantic_pred = mask_semantic_pred.sigmoid().squeeze()
         threshold = rcnn_test_cfg.mask_thr_binary
@@ -122,7 +123,7 @@ class SemanticMaskHead(FCNMaskHead):
         return mask_semantic_pred
 
 def save_semantic_logits_as_Image(filename, prediction):
-    prediction = prediction.astype(np.uint8)
+    prediction = prediction.numpy().astype(np.uint8)
 
     mask = Image.fromarray(prediction)
     mask.save(filename)

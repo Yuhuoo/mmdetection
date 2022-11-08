@@ -10,7 +10,9 @@ from mmcv.runner import BaseModule
 from mmdet.models.builder import HEADS, build_loss
 from mmdet.models.utils import (get_uncertain_point_coords_with_randomness,
                                 get_uncertainty)
-
+import ipdb
+import numpy as np
+from PIL import Image
 
 @HEADS.register_module()
 class MaskPointHead(BaseModule):
@@ -231,9 +233,63 @@ class MaskPointHead(BaseModule):
                 most uncertain points from the [mask_height, mask_width] grid .
         """
         num_points = cfg.subdivision_num_points
-        uncertainty_map = get_uncertainty(mask_pred, pred_label)
+        # ipdb.set_trace()
+        uncertainty_map = get_uncertainty(mask_pred, pred_label)    # (5, 1, 56, 56)
+        # ipdb.set_trace()
         num_rois, _, mask_height, mask_width = uncertainty_map.shape
+        # ipdb.set_trace()
 
+        # During ONNX exporting, the type of each elements of 'shape' is
+        # `Tensor(float)`, while it is `float` during PyTorch inference.
+        if isinstance(mask_height, torch.Tensor):   # false
+            h_step = 1.0 / mask_height.float()
+            w_step = 1.0 / mask_width.float()
+        else:
+            # ipdb.set_trace()
+            h_step = 1.0 / mask_height
+            w_step = 1.0 / mask_width
+        # ipdb.set_trace()
+
+        # cast to int to avoid dynamic K for TopK op in ONNX
+        mask_size = int(mask_height * mask_width)
+        uncertainty_map = uncertainty_map.view(num_rois, mask_size)   # (5, 3136)
+        # ipdb.set_trace()
+
+        num_points = min(mask_size, num_points)
+        point_indices = uncertainty_map.topk(num_points, dim=1)[1]  # (5, topk)
+        # ipdb.set_trace()
+
+        xs = w_step / 2.0 + (point_indices % mask_width).float() * w_step
+        ys = h_step / 2.0 + (point_indices // mask_width).float() * h_step
+        point_coords = torch.stack([xs, ys], dim=2)
+        # ipdb.set_trace()
+
+        return point_indices, point_coords
+
+    def get_boundary_rel_points_test(self, mask_instance_pred, mask_semantic_pred, pred_label):
+        """Get ``num_points`` boundary points using semantic mask during test.
+
+        Args:
+            rois (Tensor): shape (num_rois, 5).
+            mask_instance_pred (Tensor): A instance pred tensor of shape (num_rois, num_classes,
+                mask_height, mask_width) for class-specific or class-agnostic
+                prediction.
+            mask_semantic_pred (Tensor): A semantic pred tensor of shape (1, 1, x[0].shape[0], x[0].shape[1])
+            pred_label (list): The predication class for each instance.
+
+        Returns:
+            point_indices List[(Tensor)]: A list[tensor] of shape (num_rois, num_points)
+                that contains indices from [0, mask_height x mask_width) of the
+                most uncertain points.
+            point_coords List[(Tensor)]: A list[tensor] of shape (num_rois, num_points, 2)
+                that contains [0, 1] x [0, 1] normalized coordinates of the
+                most uncertain points from the [mask_height, mask_width] grid .
+        """
+
+        # ipdb.set_trace()
+        boundary_points_map = get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label)
+        mask_height, mask_width = boundary_points_map.shape[-2:]
+        # ipdb.set_trace()
         # During ONNX exporting, the type of each elements of 'shape' is
         # `Tensor(float)`, while it is `float` during PyTorch inference.
         if isinstance(mask_height, torch.Tensor):
@@ -242,12 +298,58 @@ class MaskPointHead(BaseModule):
         else:
             h_step = 1.0 / mask_height
             w_step = 1.0 / mask_width
+        # ipdb.set_trace()
         # cast to int to avoid dynamic K for TopK op in ONNX
         mask_size = int(mask_height * mask_width)
-        uncertainty_map = uncertainty_map.view(num_rois, mask_size)
-        num_points = min(mask_size, num_points)
-        point_indices = uncertainty_map.topk(num_points, dim=1)[1]
-        xs = w_step / 2.0 + (point_indices % mask_width).float() * w_step
-        ys = h_step / 2.0 + (point_indices // mask_width).float() * h_step
-        point_coords = torch.stack([xs, ys], dim=2)
+        boundary_points_map = [boundary_point_map.view(1, mask_size) for boundary_point_map in boundary_points_map]
+        point_indices = [torch.where(boundary_point_map != 0)[1] for boundary_point_map in boundary_points_map]
+        # ipdb.set_trace()
+
+        point_coords = []
+        for point_indice in point_indices:
+            xs = w_step / 2.0 + (point_indice % mask_width).float() * w_step
+            ys = h_step / 2.0 + (point_indice // mask_width).float() * h_step
+            point_coord = torch.stack([xs, ys], dim=1)
+            point_coords.append(point_coord)
+        # ipdb.set_trace()
+
         return point_indices, point_coords
+
+def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
+
+    # 提取出对应labele的 instance pred
+    inds = torch.arange(mask_instance_pred.shape[0], device=mask_instance_pred.device)
+    prediction_instance = mask_instance_pred[inds, pred_label].unsqueeze(1)
+    mask_instance_logits = np.where(prediction_instance > 0.5, 1, 0) * 255
+
+    # ipdb.set_trace()
+    # for i, mask_instance in enumerate(mask_instance_logits):
+    #     filename = "/hy-tmp/mmdetection/mask_instance_{}.png".format(i)
+    #     save_semantic_logits_as_Image(filename, mask_instance)
+
+    # ipdb.set_trace()
+    mask_semantic_logits = np.where(mask_semantic_pred > 0.5, 1, 0) * 255
+    # for i, mask_semantic in enumerate(mask_semantic_logits):
+    #     filename = "/hy-tmp/mmdetection/mask_semantic_{}.png".format(i)
+    #     save_semantic_logits_as_Image(filename, mask_semantic)
+
+    # boundary points
+    # ipdb.set_trace()
+    mask_boundary = mask_instance_logits + mask_semantic_logits
+    boundary_points = np.where(mask_boundary != 0, 1, 0)
+    boundary_points = torch.from_numpy(boundary_points)
+
+    # ipdb.set_trace()
+    return boundary_points
+
+
+def save_semantic_logits_as_Image(filename, prediction):
+    if isinstance(prediction, torch.Tensor):
+        prediction = prediction.numpy()
+
+    if prediction.shape[0] == 1:
+        prediction = prediction.squeeze(0)
+
+    prediction = prediction.astype(np.uint8)
+    mask = Image.fromarray(prediction)
+    mask.save(filename)

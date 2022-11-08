@@ -10,7 +10,7 @@ from mmcv.ops import point_sample, rel_roi_point_to_rel_img_point
 
 from mmdet.core import bbox2roi, bbox_mapping, merge_aug_masks
 from .. import builder
-from ..builder import HEADS
+from ..builder import HEADS, build_head, build_roi_extractor
 from .standard_roi_head import StandardRoIHead
 
 import copy
@@ -21,18 +21,19 @@ import ipdb
 class PointRendRoIHead(StandardRoIHead):
     """`PointRend <https://arxiv.org/abs/1912.08193>`_."""
 
-    def __init__(self, point_head, semantic_head, *args, **kwargs):
+    def __init__(self, point_head, semantic_roi_extractor, semantic_head, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self.with_bbox and self.with_mask
         self.init_point_head(point_head)
-        self.init_semantic_head(semantic_head)
+        self.init_semantic_head(semantic_roi_extractor, semantic_head)
 
     def init_point_head(self, point_head):
         """Initialize ``point_head``"""
         self.point_head = builder.build_head(point_head)
 
-    def init_semantic_head(self, semantic_head):
+    def init_semantic_head(self, semantic_roi_extractor, semantic_head):
         """Initialize ``semantic_head``"""
+        self.semantic_roi_extractor = build_roi_extractor(semantic_roi_extractor)
         self.semantic_head = builder.build_head(semantic_head)
 
     def _mask_forward(self, x, rois=None, pos_inds=None, bbox_feats=None):
@@ -40,6 +41,7 @@ class PointRendRoIHead(StandardRoIHead):
         assert ((rois is not None) ^
                 (pos_inds is not None and bbox_feats is not None))
         if rois is not None:
+            # ipdb.set_trace()
             mask_feats = self.mask_roi_extractor(
                 x[:self.mask_roi_extractor.num_inputs], rois)
             if self.with_shared_head:
@@ -51,6 +53,8 @@ class PointRendRoIHead(StandardRoIHead):
         mask_pred_coarse, mask_pred_instance = self.mask_head(mask_feats)
         # ipdb.set_trace()
         mask_pred_semantic = self.semantic_head(x[0])
+        mask_pred_semantic = self.semantic_roi_extractor([mask_pred_semantic], rois)
+
         # ipdb.set_trace()
         mask_results = dict(mask_pred_coarse=mask_pred_coarse,
                             mask_pred_instance=mask_pred_instance,
@@ -188,6 +192,7 @@ class PointRendRoIHead(StandardRoIHead):
             Tensor: The refined masks of shape (num_rois, num_classes,
                 large_size, large_size).
         """
+        # ipdb.set_trace()
         refined_mask_pred = mask_pred.clone()
         for subdivision_step in range(self.test_cfg.subdivision_steps):
             refined_mask_pred = F.interpolate(
@@ -204,24 +209,82 @@ class PointRendRoIHead(StandardRoIHead):
                     and
                     subdivision_step < self.test_cfg.subdivision_steps - 1):
                 continue
+                
             point_indices, rel_roi_points = \
-                self.point_head.get_roi_rel_points_test(
-                    refined_mask_pred, label_pred, cfg=self.test_cfg)
-            fine_grained_point_feats = self._get_fine_grained_point_feats(
-                x, rois, rel_roi_points, img_metas)
+                        self.point_head.get_roi_rel_points_test(refined_mask_pred, label_pred, cfg=self.test_cfg)
+            
+            fine_grained_point_feats = self._get_fine_grained_point_feats(x, rois, rel_roi_points, img_metas)
             coarse_point_feats = point_sample(mask_pred, rel_roi_points)
-            mask_point_pred = self.point_head(fine_grained_point_feats,
-                                              coarse_point_feats)
+            mask_point_pred = self.point_head(fine_grained_point_feats, coarse_point_feats)  # (5, 80, 784)
 
-            point_indices = point_indices.unsqueeze(1).expand(-1, channels, -1)
-            refined_mask_pred = refined_mask_pred.reshape(
-                num_rois, channels, mask_height * mask_width)
-            refined_mask_pred = refined_mask_pred.scatter_(
-                2, point_indices, mask_point_pred)
-            refined_mask_pred = refined_mask_pred.view(num_rois, channels,
-                                                       mask_height, mask_width)
+            point_indices = point_indices.unsqueeze(1).expand(-1, channels, -1)     # (5, 80, 784)
+            refined_mask_pred = refined_mask_pred.reshape(num_rois, channels, mask_height * mask_width)     # (5, 80, 784)
+            refined_mask_pred = refined_mask_pred.scatter_(2, point_indices, mask_point_pred)  # (5, 80, 784)
+            refined_mask_pred = refined_mask_pred.view(num_rois, channels, mask_height, mask_width)
 
         return refined_mask_pred
+
+    def _mask_semantic_points_forward_test(self, x, rois, label_pred, coarse_features, mask_instance_pred, mask_semantic_pred,
+                                 img_metas):
+        """Mask refining process with point head in testing.
+
+        Args:
+            x (tuple[Tensor]): Feature maps of all scale level.
+            rois (Tensor): shape (num_rois, 5).
+            label_pred (Tensor): The predication class for each rois.
+            coarse_features (Tensor): The predication coarse masks of
+                shape (num_rois, num_classes, small_size, small_size).
+            mask_instance_pred (Tensor): The predication instance masks of
+                shape (num_rois, num_classes, small_size, small_size).
+            mask_semantic_pred (Tensor): The predication semantic masks of
+                shape (1, 1, H, W).
+            img_metas (list[dict]): Image meta info.
+
+        Returns:
+            Tensor: The refined masks of shape (num_rois, num_classes,
+                large_size, large_size).
+        """
+        # ipdb.set_trace()
+        mask_instance_pred = F.interpolate(
+            mask_instance_pred,
+            scale_factor=self.test_cfg.scale_factor,
+            mode='bilinear',
+            align_corners=False)
+
+        # If `subdivision_num_points` is larger or equal to the
+        # resolution of the next step, then we can skip this step
+        num_rois, channels, mask_height, mask_width = mask_instance_pred.shape
+
+        point_indices, rel_roi_points = self.point_head.get_boundary_rel_points_test(mask_instance_pred, mask_semantic_pred, label_pred)
+
+        # ipdb.set_trace()
+        fine_grained_point_feats = [self._get_fine_grained_point_feats(x, roi.unsqueeze(0), rel_roi_point.unsqueeze(0), img_metas) \
+                                        for roi, rel_roi_point in zip(rois, rel_roi_points)]
+
+        # ipdb.set_trace()
+        coarse_point_feats = [point_sample(coarse_feature.unsqueeze(0), rel_roi_point.unsqueeze(0)) \
+                               for coarse_feature, rel_roi_point in zip(coarse_features, rel_roi_points)]
+
+        # ipdb.set_trace()
+        mask_point_preds = [self.point_head(fine_grained_point_feat, coarse_point_feat) \
+                            for fine_grained_point_feat, coarse_point_feat in zip(fine_grained_point_feats, coarse_point_feats)]
+
+        # ipdb.set_trace()
+        mask_instance_pred = mask_instance_pred.reshape(num_rois, channels, mask_height * mask_width)
+        # ipdb.set_trace()
+
+        # (80, l1 = [(80, l1) (80, l1)]
+        point_indices = [point_indice.unsqueeze(0).expand(channels, -1) for point_indice in point_indices]
+        mask_instance_pred = [mask_instance.scatter_(1, point_indice, mask_point_pred.squeeze(0)) \
+                               for mask_instance, point_indice, mask_point_pred in zip(mask_instance_pred, point_indices, mask_point_preds)]
+        # ipdb.set_trace()
+
+        mask_instance_pred = torch.cat(mask_instance_pred, dim=0)
+        mask_instance_pred = mask_instance_pred.view(num_rois, channels, mask_height, mask_width)
+
+        return mask_instance_pred
+
+
 
     def simple_test_mask(self,
                          x,
@@ -258,6 +321,7 @@ class PointRendRoIHead(StandardRoIHead):
                     _bboxes[i] * scale_factors[i] for i in range(len(_bboxes))
                 ]
 
+            # ipdb.set_trace()
             mask_rois = bbox2roi(_bboxes)
             mask_results = self._mask_forward(x, mask_rois)
             # mask_pred_coarse, mask_pred_instance
@@ -279,16 +343,19 @@ class PointRendRoIHead(StandardRoIHead):
                     x_i = [xx[[i]] for xx in x]
                     mask_rois_i = mask_rois[i]
                     mask_rois_i[:, 0] = 0  # TODO: remove this hack
+                    # ipdb.set_trace(context=5)
                     mask_pred_i = self._mask_point_forward_test(
-                        x_i, mask_rois_i, det_labels[i], mask_preds_coarse[i],
+                        x_i, mask_rois_i, det_labels[i], mask_preds_coarse[0],
                         [img_metas])
                     # ipdb.set_trace(context=5)
-                    segm_result = self.mask_head.get_seg_masks(
-                        mask_pred_i, _bboxes[i], det_labels[i], self.test_cfg,
-                        ori_shapes[i], scale_factors[i], rescale)
-                    # semantic_result = self.semantic_head.get_seg_masks(
-                    #     mask_pred_semantic, self.test_cfg)
+                    mask_semantic_pred_i = self._mask_semantic_points_forward_test(
+                        x_i, mask_rois_i, det_labels[i], mask_preds_coarse[0], mask_pred_instance, mask_pred_semantic,
+                        [img_metas]
+                    )
                     # ipdb.set_trace(context=5)
+                    segm_result = self.mask_head.get_seg_masks(
+                        mask_semantic_pred_i, _bboxes[i], det_labels[i], self.test_cfg,
+                        ori_shapes[i], scale_factors[i], rescale)
                     segm_results.append(segm_result)
         return segm_results
 

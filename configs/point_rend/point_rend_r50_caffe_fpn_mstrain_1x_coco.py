@@ -30,6 +30,11 @@ model = dict(
             coarse_pred_each_layer=True,
             loss_point=dict(
                 type='CrossEntropyLoss', use_mask=True, loss_weight=1.0)),
+        semantic_roi_extractor=dict(
+            type='SingleRoIExtractor',
+            roi_layer=dict(type='RoIAlign', output_size=112, sampling_ratio=0),
+            out_channels=1,
+            featmap_strides=[4]),
         semantic_head=dict(
             type='SemanticMaskHead',
             upsample_cfg=dict(type=None),
@@ -47,7 +52,7 @@ model = dict(
         rcnn=dict(
             subdivision_steps=5,
             subdivision_num_points=28 * 28,
-            scale_factor=2)))
+            scale_factor=4)))
 
-# find_unused_parameters = True
+find_unused_parameters = True
 
