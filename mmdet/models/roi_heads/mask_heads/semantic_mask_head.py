@@ -106,7 +106,7 @@ class SemanticMaskHead(FCNMaskHead):
                 class label c.
         """
 
-        ipdb.set_trace()
+        # ipdb.set_trace()
         img_h, img_w = mask_semantic_pred.size[-2:]
         im_mask = torch.zeros([img_h, img_w], dtype=torch.uint8)
 
@@ -115,7 +115,7 @@ class SemanticMaskHead(FCNMaskHead):
         mask_semantic_pred = (mask_semantic_pred >= threshold).to(dtype=torch.bool)
 
         im_mask[mask_semantic_pred] = 255
-        ipdb.set_trace()
+        # ipdb.set_trace()
 
         filename = "/hy-tmp/mmdetection/semantic.png"
         save_semantic_logits_as_Image(filename, im_mask)

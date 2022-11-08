@@ -53,7 +53,8 @@ class PointRendRoIHead(StandardRoIHead):
         mask_pred_coarse, mask_pred_instance = self.mask_head(mask_feats)
         # ipdb.set_trace()
         mask_pred_semantic = self.semantic_head(x[0])
-        mask_pred_semantic = self.semantic_roi_extractor([mask_pred_semantic], rois)
+        if not self.training:
+            mask_pred_semantic = self.semantic_roi_extractor([mask_pred_semantic], rois)
 
         # ipdb.set_trace()
         mask_results = dict(mask_pred_coarse=mask_pred_coarse,

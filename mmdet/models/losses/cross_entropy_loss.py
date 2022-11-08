@@ -142,7 +142,7 @@ def binary_cross_entropy(pred,
     # do the reduction for the weighted loss
     loss = weight_reduce_loss(
         loss, weight, reduction=reduction, avg_factor=avg_factor)
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return loss
 
 

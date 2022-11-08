@@ -273,7 +273,7 @@ class MaskTestMixin:
                     segm_results.append(
                         [[] for _ in range(self.mask_head.num_classes)])
                 else:
-                    ipdb.set_trace(context=5)
+                    # ipdb.set_trace(context=5)
                     segm_result = self.mask_head.get_seg_masks(
                         mask_preds[i], _bboxes[i], det_labels[i],
                         self.test_cfg, ori_shapes[i], scale_factors[i],
