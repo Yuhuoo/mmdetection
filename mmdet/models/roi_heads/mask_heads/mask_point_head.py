@@ -301,8 +301,15 @@ class MaskPointHead(BaseModule):
         # ipdb.set_trace()
         # cast to int to avoid dynamic K for TopK op in ONNX
         mask_size = int(mask_height * mask_width)
-        boundary_points_map = [boundary_point_map.view(1, mask_size) for boundary_point_map in boundary_points_map]
-        point_indices = [torch.where(boundary_point_map != 0)[1] for boundary_point_map in boundary_points_map]
+        boundary_points_maps = [boundary_point_map.view(1, mask_size) for boundary_point_map in boundary_points_map]
+        point_indices = []
+        for boundary_point_map in boundary_points_maps:
+            point_indice = torch.where(boundary_point_map != 0)[1]
+            if len(point_indice) == 0:
+                # ipdb.set_trace()
+                point_indice = boundary_point_map[0][:1]
+            point_indices.append(point_indice)
+
         # ipdb.set_trace()
 
         point_coords = []

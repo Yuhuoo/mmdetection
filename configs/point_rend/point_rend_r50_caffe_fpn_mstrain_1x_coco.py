@@ -32,7 +32,7 @@ model = dict(
                 type='CrossEntropyLoss', use_mask=True, loss_weight=1.0)),
         semantic_roi_extractor=dict(
             type='SingleRoIExtractor',
-            roi_layer=dict(type='RoIAlign', output_size=112, sampling_ratio=0),
+            roi_layer=dict(type='RoIAlign', output_size=224, sampling_ratio=0),
             out_channels=1,
             featmap_strides=[4]),
         semantic_head=dict(
@@ -52,7 +52,9 @@ model = dict(
         rcnn=dict(
             subdivision_steps=5,
             subdivision_num_points=28 * 28,
-            scale_factor=4)))
+            scale_factor=2,
+            size=224,
+            mask_thr_binary=0.6)))
 
 find_unused_parameters = True
 
