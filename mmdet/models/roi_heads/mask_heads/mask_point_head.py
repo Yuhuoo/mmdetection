@@ -320,7 +320,7 @@ def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
     # 提取出对应labele的 instance pred
     inds = torch.arange(mask_instance_pred.shape[0], device=mask_instance_pred.device)
     prediction_instance = mask_instance_pred[inds, pred_label].unsqueeze(1)
-    mask_instance_logits = np.where(prediction_instance > 0.5, 1, 0) * 255
+    mask_instance_logits = torch.where(prediction_instance > 0.5, -1, 0) * 255
 
     # ipdb.set_trace()
     # for i, mask_instance in enumerate(mask_instance_logits):
@@ -328,7 +328,7 @@ def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
     #     save_semantic_logits_as_Image(filename, mask_instance)
 
     # ipdb.set_trace()
-    mask_semantic_logits = np.where(mask_semantic_pred > 0.5, 1, 0) * 255
+    mask_semantic_logits = torch.where(mask_semantic_pred > 0.5, 1, 0) * 255
     # for i, mask_semantic in enumerate(mask_semantic_logits):
     #     filename = "/hy-tmp/mmdetection/mask_semantic_{}.png".format(i)
     #     save_semantic_logits_as_Image(filename, mask_semantic)
@@ -336,8 +336,8 @@ def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
     # boundary points
     # ipdb.set_trace()
     mask_boundary = mask_instance_logits + mask_semantic_logits
-    boundary_points = np.where(mask_boundary != 0, 1, 0)
-    boundary_points = torch.from_numpy(boundary_points)
+    boundary_points = torch.where(mask_boundary != 0, 1, 0)
+    # boundary_points = torch.from_numpy(boundary_points)
 
     # ipdb.set_trace()
     return boundary_points
