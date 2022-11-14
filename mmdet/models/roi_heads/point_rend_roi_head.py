@@ -228,6 +228,71 @@ class PointRendRoIHead(StandardRoIHead):
 
         return refined_mask_pred
 
+    def _mask_semantic_points_forward_test_batch(self, x, rois, label_pred, mask_pred, mask_instance_pred,
+                                                 mask_semantic_pred, img_metas):
+        """Mask refining process with point head in testing.
+
+        Args:
+            x (tuple[Tensor]): Feature maps of all scale level.
+            rois (Tensor): shape (num_rois, 5).
+            label_pred (Tensor): The predication class for each rois.
+            coarse_features (Tensor): The predication coarse masks of
+                shape (num_rois, num_classes, small_size, small_size).
+            mask_instance_pred (Tensor): The predication instance masks of
+                shape (num_rois, num_classes, small_size, small_size).
+            mask_semantic_pred (Tensor): The predication semantic masks of
+                shape (1, 1, H, W).
+            img_metas (list[dict]): Image meta info.
+
+        Returns:
+            Tensor: The refined masks of shape (num_rois, num_classes,
+                large_size, large_size).
+        """
+
+        refined_mask_pred = mask_pred.clone()
+        for subdivision_step in range(self.test_cfg.subdivision_steps):
+            refined_mask_pred = F.interpolate(
+                refined_mask_pred,
+                scale_factor=self.test_cfg.scale_factor,
+                mode='bilinear',
+                align_corners=False)
+
+            # If `subdivision_num_points` is larger or equal to the
+            # resolution of the next step, then we can skip this step
+            num_rois, channels, mask_height, mask_width = refined_mask_pred.shape
+            if (self.test_cfg.subdivision_num_points >=
+                    self.test_cfg.scale_factor ** 2 * mask_height * mask_width
+                    and
+                    subdivision_step < self.test_cfg.subdivision_steps - 1):
+                continue
+
+            mask_instance_pred = F.interpolate(
+                mask_instance_pred,
+                (mask_height, mask_width),
+                mode='bilinear',
+                align_corners=False)
+
+            mask_semantic_pred = F.interpolate(
+                mask_semantic_pred,
+                (mask_height, mask_width),
+                mode='bilinear',
+                align_corners=False)
+
+            point_indices, rel_roi_points = \
+                self.point_head.get_boundary_rel_points_test(mask_instance_pred, mask_semantic_pred, label_pred,
+                                                             cfg=self.test_cfg)
+
+            fine_grained_point_feats = self._get_fine_grained_point_feats(x, rois, rel_roi_points, img_metas)
+            coarse_point_feats = point_sample(mask_pred, rel_roi_points)
+            mask_point_pred = self.point_head(fine_grained_point_feats, coarse_point_feats)  # (5, 80, 784)
+
+            point_indices = point_indices.unsqueeze(1).expand(-1, channels, -1)  # (5, 80, 784)
+            refined_mask_pred = refined_mask_pred.reshape(num_rois, channels, mask_height * mask_width)  # (5, 80, 784)
+            refined_mask_pred = refined_mask_pred.scatter_(2, point_indices, mask_point_pred)  # (5, 80, 784)
+            refined_mask_pred = refined_mask_pred.view(num_rois, channels, mask_height, mask_width)
+
+        return refined_mask_pred
+
     def _mask_semantic_points_forward_test(self, x, rois, label_pred, coarse_features, mask_instance_pred,
                                            mask_semantic_pred, img_metas):
         """Mask refining process with point head in testing.
@@ -356,10 +421,10 @@ class PointRendRoIHead(StandardRoIHead):
                         x_i, mask_rois_i, det_labels[i], mask_preds_coarse[0],
                         [img_metas])
                     # ipdb.set_trace(context=5)
-                    mask_semantic_pred_i = self._mask_semantic_points_forward_test(
+                    mask_semantic_pred_i = self._mask_semantic_points_forward_test_batch(
                         x_i, mask_rois_i, det_labels[i], mask_preds_coarse[0], mask_pred_instance, mask_pred_semantic,
-                        [img_metas]
-                    )
+                        [img_metas])
+
                     # ipdb.set_trace(context=5)
                     # segm_result = self.mask_head.get_seg_masks(
                     #     mask_semantic_pred_i[0].unsqueeze(0), _bboxes[i][0].unsqueeze(0), \

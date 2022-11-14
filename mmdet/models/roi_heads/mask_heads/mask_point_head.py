@@ -14,6 +14,7 @@ import ipdb
 import numpy as np
 from PIL import Image
 
+
 @HEADS.register_module()
 class MaskPointHead(BaseModule):
     """A mask point head use in PointRend.
@@ -234,14 +235,14 @@ class MaskPointHead(BaseModule):
         """
         num_points = cfg.subdivision_num_points
         # ipdb.set_trace()
-        uncertainty_map = get_uncertainty(mask_pred, pred_label)    # (5, 1, 56, 56)
+        uncertainty_map = get_uncertainty(mask_pred, pred_label)  # (5, 1, 56, 56)
         # ipdb.set_trace()
         num_rois, _, mask_height, mask_width = uncertainty_map.shape
         # ipdb.set_trace()
 
         # During ONNX exporting, the type of each elements of 'shape' is
         # `Tensor(float)`, while it is `float` during PyTorch inference.
-        if isinstance(mask_height, torch.Tensor):   # false
+        if isinstance(mask_height, torch.Tensor):  # false
             h_step = 1.0 / mask_height.float()
             w_step = 1.0 / mask_width.float()
         else:
@@ -252,7 +253,7 @@ class MaskPointHead(BaseModule):
 
         # cast to int to avoid dynamic K for TopK op in ONNX
         mask_size = int(mask_height * mask_width)
-        uncertainty_map = uncertainty_map.view(num_rois, mask_size)   # (5, 3136)
+        uncertainty_map = uncertainty_map.view(num_rois, mask_size)  # (5, 3136)
         # ipdb.set_trace()
 
         num_points = min(mask_size, num_points)
@@ -266,7 +267,7 @@ class MaskPointHead(BaseModule):
 
         return point_indices, point_coords
 
-    def get_boundary_rel_points_test(self, mask_instance_pred, mask_semantic_pred, pred_label):
+    def get_boundary_rel_points_test(self, mask_instance_pred, mask_semantic_pred, pred_label, cfg):
         """Get ``num_points`` boundary points using semantic mask during test.
 
         Args:
@@ -285,10 +286,12 @@ class MaskPointHead(BaseModule):
                 that contains [0, 1] x [0, 1] normalized coordinates of the
                 most uncertain points from the [mask_height, mask_width] grid .
         """
+        num_points = cfg.subdivision_num_points
 
         # ipdb.set_trace()
-        boundary_points_map = get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label)
-        mask_height, mask_width = boundary_points_map.shape[-2:]
+        boundary_points_map = get_boundary_points(mask_instance_pred, mask_semantic_pred,
+                                                  pred_label)  # [100, 1, 28, 28]
+        num_rois, _, mask_height, mask_width = boundary_points_map.shape
         # ipdb.set_trace()
         # During ONNX exporting, the type of each elements of 'shape' is
         # `Tensor(float)`, while it is `float` during PyTorch inference.
@@ -301,33 +304,44 @@ class MaskPointHead(BaseModule):
         # ipdb.set_trace()
         # cast to int to avoid dynamic K for TopK op in ONNX
         mask_size = int(mask_height * mask_width)
-        boundary_points_maps = [boundary_point_map.view(1, mask_size) for boundary_point_map in boundary_points_map]
-        point_indices = []
-        for boundary_point_map in boundary_points_maps:
-            point_indice = torch.where(boundary_point_map != 0)[1]
-            if len(point_indice) == 0:
-                # ipdb.set_trace()
-                point_indice = boundary_point_map[0][:1]
-            point_indices.append(point_indice)
-
         # ipdb.set_trace()
-
-        point_coords = []
-        for point_indice in point_indices:
-            xs = w_step / 2.0 + (point_indice % mask_width).float() * w_step
-            ys = h_step / 2.0 + (point_indice // mask_width).float() * h_step
-            point_coord = torch.stack([xs, ys], dim=1)
-            point_coords.append(point_coord)
+        boundary_points_maps = boundary_points_map.view(num_rois, mask_size)
         # ipdb.set_trace()
+        boundary_points = torch.sort(boundary_points_maps, descending=True, dim=1)[1]  # [100, 784]
+        # ipdb.set_trace()
+        num_points = min(mask_size, num_points)
+        point_indices = boundary_points.topk(num_points, dim=1)[1]
+        # ipdb.set_trace()
+        xs = w_step / 2.0 + (point_indices % mask_width).float() * w_step
+        ys = h_step / 2.0 + (point_indices // mask_width).float() * h_step
+        point_coords = torch.stack([xs, ys], dim=2)
+
+        #         boundary_points_maps = [boundary_point_map.view(1, mask_size) for boundary_point_map in boundary_points_map]
+        #         point_indices = []
+        #         for boundary_point_map in boundary_points_maps:
+        #             point_indice = torch.where(boundary_point_map != 0)[1]
+        #             if len(point_indice) == 0:
+        #                 # ipdb.set_trace()
+        #                 point_indice = boundary_point_map[0][:784]
+        #             point_indices.append(point_indice)
+
+        #         # ipdb.set_trace()
+        #         point_coords = []
+        #         for point_indice in point_indices:
+        #             xs = w_step / 2.0 + (point_indice % mask_width).float() * w_step
+        #             ys = h_step / 2.0 + (point_indice // mask_width).float() * h_step
+        #             point_coord = torch.stack([xs, ys], dim=1)
+        #             point_coords.append(point_coord)
+        #         # ipdb.set_trace()
 
         return point_indices, point_coords
 
-def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
 
+def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
     # 提取出对应labele的 instance pred
     inds = torch.arange(mask_instance_pred.shape[0], device=mask_instance_pred.device)
     prediction_instance = mask_instance_pred[inds, pred_label].unsqueeze(1)
-    mask_instance_logits = torch.where(prediction_instance > 0.5, -1, 0) * 255
+    mask_instance_logits = torch.where(prediction_instance > 0.5, -1, 0)
 
     # ipdb.set_trace()
     # for i, mask_instance in enumerate(mask_instance_logits):
@@ -335,7 +349,7 @@ def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
     #     save_semantic_logits_as_Image(filename, mask_instance)
 
     # ipdb.set_trace()
-    mask_semantic_logits = torch.where(mask_semantic_pred > 0.5, 1, 0) * 255
+    mask_semantic_logits = torch.where(mask_semantic_pred > 0.5, 1, 0)
     # for i, mask_semantic in enumerate(mask_semantic_logits):
     #     filename = "/hy-tmp/mmdetection/mask_semantic_{}.png".format(i)
     #     save_semantic_logits_as_Image(filename, mask_semantic)
@@ -344,10 +358,11 @@ def get_boundary_points(mask_instance_pred, mask_semantic_pred, pred_label):
     # ipdb.set_trace()
     mask_boundary = mask_instance_logits + mask_semantic_logits
     boundary_points = torch.where(mask_boundary != 0, 1, 0)
+
     # boundary_points = torch.from_numpy(boundary_points)
 
     # ipdb.set_trace()
-    return boundary_points
+    return boundary_points  # [100, 1, 28, 28]
 
 
 def save_semantic_logits_as_Image(filename, prediction):

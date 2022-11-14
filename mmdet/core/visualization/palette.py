@@ -53,6 +53,9 @@ def get_palette(palette, num_classes):
     elif palette == 'voc':
         from mmdet.datasets import VOCDataset
         dataset_palette = VOCDataset.PALETTE
+    elif palette == 'None':
+        dataset_palette = [(106, 0, 228) for _ in range(num_classes)]
+
     elif mmcv.is_str(palette):
         dataset_palette = [mmcv.color_val(palette)[::-1]] * num_classes
     else:

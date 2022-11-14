@@ -238,8 +238,8 @@ def main():
 
     if not distributed:
         model = build_dp(model, cfg.device, device_ids=cfg.gpu_ids)
-        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
-                                  args.show_score_thr)
+        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir, 0.9)
+                                  # args.show_score_thr)
     else:
         model = build_ddp(
             model,

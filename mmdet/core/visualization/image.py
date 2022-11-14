@@ -163,7 +163,7 @@ def draw_labels(ax,
     return ax
 
 
-def draw_masks(ax, img, masks, color=None, with_edge=True, alpha=0.8):
+def draw_masks(ax, img, masks, color=None, with_edge=True, alpha=0.9):
     """Draw masks on the image and their edges on the axes.
 
     Args:
